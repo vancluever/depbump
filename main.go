@@ -130,9 +130,9 @@ func main() {
 
 		if path == "" {
 			path = arg
+		} else {
+			version = arg
 		}
-
-		version = arg
 	}
 
 	if path == "" {
