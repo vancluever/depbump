@@ -7,14 +7,17 @@ import (
 	"html/template"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
 type commitTemplateData struct {
 	Project string
 	Version string
+	Target  string
 	Path    string
 	URL     string
+	Vendor  bool
 }
 
 var commitTemplate = template.Must(
@@ -28,12 +31,12 @@ To version {{.Version}}.
 
 Executed via:
 
-  go get {{Path}}@{{.Version}}
-	go mod tidy
-	go mod vendor # If this project has a vendor dir.
+  go get {{.Target}}
+  go mod tidy
+{{if .Vendor}}  go mod vendor{{- end}}
 
 For details on changes, see the project's release page.
-{{- if .URL }}  {{.URL}}{{- end}}
+{{if .URL }}  {{.URL}}{{- end}}
 
 This commit message was auto-generated.
 `),
@@ -97,7 +100,7 @@ func pkgVersion(path string) string {
 		}
 	}
 
-	fatalf("package %q not found in go.mod, cannot get version", path)
+	fatalf("package %q not found in go.mod, cannot get version\n", path)
 	return ""
 }
 
@@ -128,22 +131,22 @@ func main() {
 
 	oldVersion := pkgVersion(path)
 	if oldVersion == version {
-		fatalf("fatal: package %s is already at version %s", path, version)
+		fatalf("fatal: package %s is already at version %s\n", path, version)
 	}
 
 	// Upgrade package
-	args := []string{"get", path}
+	target := path
 	if version != "" {
-		args = append(args, version)
+		target = path + "@" + version
 	}
 
-	if err := execCommandRun("go", args...); err != nil {
+	if err := execCommandRun("go", "get", target); err != nil {
 		fatal(err)
 	}
 
 	newVersion := pkgVersion(path)
 	if oldVersion == newVersion {
-		fatalf("fatal: package %s version %s is already current, nothing to do", path, version)
+		fatalf("fatal: package %s version %s is already current, nothing to do\n", path, oldVersion)
 	}
 
 	// Tidy
@@ -157,16 +160,24 @@ func main() {
 	if err != nil {
 		if os.IsNotExist(err) {
 			skipVendor = true
-		}
-
-		fatal(err)
-	}
-
-	if !skipVendor {
-		if err := execCommandRun("go", "mod", "tidy"); err != nil {
+		} else {
 			fatal(err)
 		}
 	}
+
+	if !skipVendor {
+		if err := execCommandRun("go", "mod", "vendor"); err != nil {
+			fatal(err)
+		}
+	}
+
+	// Get existing branch
+	out, err = execCommand("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		fatal(err)
+	}
+
+	oldBranch := strings.TrimSpace(string(out))
 
 	// Commit changes on new branch
 	pathSplit := strings.Split(path, "/")
@@ -185,10 +196,24 @@ func main() {
 		Project: project,
 		Version: newVersion,
 		Path:    path,
+		Target:  target,
+		Vendor:  !skipVendor,
 	}
 
 	if pathSplit[0] == "github.com" {
-		data.URL = "https://" + path + "@" + version
+		// Add the correct tree based version.
+		var tree string
+		if regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(newVersion) {
+			// Semver - versions otherwise start with a timestamp
+			tree = newVersion
+		} else {
+			// Version is in format FAKEVER-TIMESTAMP-COMMIT, so we need to grab
+			// the hash
+			s := strings.Split(newVersion, "-")
+			tree = s[len(s)-1]
+		}
+
+		data.URL = "https://" + path + "/tree/" + tree
 	}
 
 	b := new(bytes.Buffer)
@@ -200,13 +225,18 @@ func main() {
 	cmd.Stdin = b
 	cmd.Stdout = os.Stdout
 	if err := cmd.Run(); err != nil {
-		fatal(err.Error() + "\nWARNING: repository is in an unclean state; please correct before trying again")
+		fatal(err.Error() + "\n\nWARNING: repository is in an unclean state; please correct before trying again")
 	}
 
 	// Push to origin
-	if err := execCommandRun("git", "push", "origin", branch); err != nil {
-		fatal(err.Error() + "\nWARNING: commit succeeded but push failed; push manually to correct")
+	// if err := execCommandRun("git", "push", "origin", branch); err != nil {
+	// 	fatal(err.Error() + "\n\nWARNING: commit succeeded but push failed; push manually to correct")
+	// }
+
+	// Checkout old branch
+	if err := execCommandRun("git", "checkout", oldBranch); err != nil {
+		fatal(err.Error() + "\n\nWARNING: update succeeded, but cannot checkout old branch")
 	}
 
-	fmt.Printf("path %s successfully updated to version %s.\n", path, version)
+	fmt.Printf("\npath %s successfully updated to version %s.\n", path, newVersion)
 }
