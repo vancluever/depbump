@@ -106,21 +106,21 @@ func pkgVersion(path string) string {
 
 func main() {
 	if len(os.Args) < 2 {
-		fatal("usage: depbump PATH [VERSION]")
+		fatal("usage: depbump [-nopush] PATH [VERSION]")
 	}
 
 	var path string
 	var version string
-	var push bool
+	push := true
 
 	for _, arg := range os.Args[1:] {
 		if strings.HasPrefix(arg, "-") {
 			switch arg {
-			case "-push":
-				push = true
+			case "-nopush":
+				push = false
 
 			default:
-				fatalf("fatal: invalid argument %q\nusage: depbump [-push] PATH [VERSION]\n", arg)
+				fatalf("fatal: invalid argument %q\nusage: depbump [-nopush] PATH [VERSION]\n", arg)
 			}
 
 			continue
@@ -138,7 +138,7 @@ func main() {
 	}
 
 	if path == "" {
-		fatal("fatal: path is empty\nusage: depbump [-push] PATH [VERSION]")
+		fatal("fatal: path is empty\nusage: depbump [-nopush] PATH [VERSION]")
 	}
 
 	// Require clean repo before continuing

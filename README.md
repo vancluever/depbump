@@ -6,8 +6,9 @@ process of keeping certain dependencies up to date.
 
 ## Usage
 
-`depbump [-push] PATH [VERSION]`
+`depbump [-nopush] PATH [VERSION]`
 
 `VERSION` is optional and is the version (or ref) that you want to update to.
 
-`-push` is optional as well and will push the changes to the origin.
+Use `-nopush` to skip the push to origin. You can use this if you need to
+preview the changes or amend the commit later.
