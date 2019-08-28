@@ -24,7 +24,7 @@ var commitTemplate = template.Must(
 	template.New("commit-template").Parse(strings.TrimSpace(`
 modules: upgrade {{.Project}} to {{.Version}}
 
-This updates
+This updates:
   {{.Path}}
 
 To version {{.Version}}.
@@ -122,6 +122,8 @@ func main() {
 			default:
 				fatalf("fatal: invalid argument %q\nusage: depbump [-push] PATH [VERSION]\n", arg)
 			}
+
+			continue
 		}
 
 		if path != "" && version != "" {
