@@ -109,14 +109,34 @@ func main() {
 		fatal("usage: depbump PATH [VERSION]")
 	}
 
-	path := os.Args[1]
-	if path == "" {
-		fatal("fatal: path is empty\nusage: depbump PATH [VERSION]")
+	var path string
+	var version string
+	var push bool
+
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "-") {
+			switch arg {
+			case "-push":
+				push = true
+
+			default:
+				fatalf("fatal: invalid argument %q\nusage: depbump [-push] PATH [VERSION]\n", arg)
+			}
+		}
+
+		if path != "" && version != "" {
+			break
+		}
+
+		if path == "" {
+			path = arg
+		}
+
+		version = arg
 	}
 
-	var version string
-	if len(os.Args) > 2 {
-		version = os.Args[2]
+	if path == "" {
+		fatal("fatal: path is empty\nusage: depbump [-push] PATH [VERSION]")
 	}
 
 	// Require clean repo before continuing
@@ -229,9 +249,11 @@ func main() {
 	}
 
 	// Push to origin
-	// if err := execCommandRun("git", "push", "origin", branch); err != nil {
-	// 	fatal(err.Error() + "\n\nWARNING: commit succeeded but push failed; push manually to correct")
-	// }
+	if push {
+		if err := execCommandRun("git", "push", "origin", branch); err != nil {
+			fatal(err.Error() + "\n\nWARNING: commit succeeded but push failed; push manually to correct")
+		}
+	}
 
 	// Checkout old branch
 	if err := execCommandRun("git", "checkout", oldBranch); err != nil {

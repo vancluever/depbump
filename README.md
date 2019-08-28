@@ -6,6 +6,8 @@ process of keeping certain dependencies up to date.
 
 ## Usage
 
-`depbump PATH [VERSION]`
+`depbump [-push] PATH [VERSION]`
 
 `VERSION` is optional and is the version (or ref) that you want to update to.
+
+`-push` is optional as well and will push the changes to the origin.
