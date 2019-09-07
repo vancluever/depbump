@@ -104,41 +104,50 @@ func pkgVersion(path string) string {
 	return ""
 }
 
+const help = "usage: depbump [-nopush|-version VERSION] PATH [COMMAND]"
+
 func main() {
 	if len(os.Args) < 2 {
-		fatal("usage: depbump [-nopush] PATH [VERSION]")
+		fatal(help)
 	}
 
 	var path string
 	var version string
+	var postCmdRaw []string
 	push := true
 
-	for _, arg := range os.Args[1:] {
-		if strings.HasPrefix(arg, "-") {
+	for i := 1; i < len(os.Args); i++ {
+		arg := os.Args[i]
+		if path == "" && strings.HasPrefix(arg, "-") {
 			switch arg {
 			case "-nopush":
 				push = false
 
+			case "-version":
+				if i+1 >= len(os.Args) {
+					// Not enough arguments
+					fatal("fatal: not enough arguments\n" + help)
+				}
+
+				i++
+				version = os.Args[i]
+
 			default:
-				fatalf("fatal: invalid argument %q\nusage: depbump [-nopush] PATH [VERSION]\n", arg)
+				fatalf("fatal: invalid argument %q\n%s\n", arg, help)
 			}
 
 			continue
 		}
 
-		if path != "" && version != "" {
-			break
-		}
-
 		if path == "" {
 			path = arg
 		} else {
-			version = arg
+			postCmdRaw = append(postCmdRaw, arg)
 		}
 	}
 
 	if path == "" {
-		fatal("fatal: path is empty\nusage: depbump [-nopush] PATH [VERSION]")
+		fatal("fatal: path is empty\n" + help)
 	}
 
 	// Require clean repo before continuing
@@ -193,39 +202,25 @@ func main() {
 		}
 	}
 
-	// Get existing branch
-	out, err = execCommand("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
-	if err != nil {
-		fatal(err)
-	}
-
-	oldBranch := strings.TrimSpace(string(out))
-
-	// Commit changes on new branch
+	// Build commit template data. Add a URL if we have a GH link,
+	// redirecting to the tree for the release.
 	pathSplit := strings.Split(path, "/")
 	project := pathSplit[len(pathSplit)-1]
-	branch := "update-" + project + "-" + newVersion
-	if err := execCommandRun("git", "checkout", "-b", branch); err != nil {
-		fatal(err)
-	}
-	if err := execCommandRun("git", "add", "--all"); err != nil {
-		fatal(err)
-	}
-
-	// Build commit data. Add a URL if we have a GH link, redirecting
-	// to the tree for the release.
 	data := commitTemplateData{
 		Project: project,
-		Version: newVersion,
 		Path:    path,
 		Target:  target,
 		Vendor:  !skipVendor,
+	}
+	vre := regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
+	if vre.MatchString(newVersion) {
+		data.Version = newVersion[1:]
 	}
 
 	if pathSplit[0] == "github.com" {
 		// Add the correct tree based version.
 		var tree string
-		if regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(newVersion) {
+		if vre.MatchString(newVersion) {
 			// Semver - versions otherwise start with a timestamp
 			tree = newVersion
 		} else {
@@ -236,6 +231,48 @@ func main() {
 		}
 
 		data.URL = "https://" + path + "/tree/" + tree
+	}
+
+	// If we have a post-run command, run it now
+	if len(postCmdRaw) > 0 {
+		fmt.Println("version has been updated, and post-command detected")
+		// Template it
+		postCmd := make([]string, len(postCmdRaw))
+		for i, c := range postCmdRaw {
+			s := new(strings.Builder)
+			t, err := template.New("cmd").Parse(c)
+			if err != nil {
+				fatalf("error building post-update command: %s\n", err)
+			}
+
+			if err := t.Execute(s, data); err != nil {
+				fatalf("error building post-update command: %s\n", err)
+			}
+
+			postCmd[i] = s.String()
+		}
+
+		fmt.Println("running:", strings.Join(postCmd, " "))
+		if err := execCommandRun(postCmd[0], postCmd[1:]...); err != nil {
+			fatalf("error running post-update command: %s\n", err)
+		}
+	}
+
+	// Get existing branch
+	out, err = execCommand("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		fatal(err)
+	}
+
+	oldBranch := strings.TrimSpace(string(out))
+
+	// Commit changes on new branch
+	branch := "update-" + project + "-" + newVersion
+	if err := execCommandRun("git", "checkout", "-b", branch); err != nil {
+		fatal(err)
+	}
+	if err := execCommandRun("git", "add", "--all"); err != nil {
+		fatal(err)
 	}
 
 	b := new(bytes.Buffer)
