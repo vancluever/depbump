@@ -160,6 +160,13 @@ func main() {
 		fatal("fatal: path is empty\n" + help)
 	}
 
+	// Do a pre-tidy. Some pre-build steps in CI (go mod download) can
+	// cause updates in go.sum, which will falsely trigger the dirty
+	// repo check below.
+	if err := execCommandRun("go", "mod", "tidy"); err != nil {
+		fatal(err)
+	}
+
 	// Require clean repo before continuing
 	out, err := execCommand("git", "status", "--porcelain").Output()
 	if err != nil {
