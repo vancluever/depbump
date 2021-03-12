@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -25,6 +26,8 @@ type commitTemplateData struct {
 }
 
 const gitHubPREndpointFmt = "https://api.github.com/repos/%s/%s/pulls"
+
+const defaultRemote = "origin"
 
 var commitTemplate = template.Must(
 	template.New("commit-template").Parse(strings.TrimSpace(`
@@ -110,6 +113,35 @@ func pkgVersion(path string) string {
 	return ""
 }
 
+// discoverDefaultBranch checks the remote for the HEAD branch.
+func discoverDefaultBranch() string {
+	out, err := execCommand("git", "ls-remote", "--symref", defaultRemote, "HEAD").Output()
+	if err != nil {
+		fatalf("error detecting default remote branch: %s", err)
+	}
+
+	// Output is first line of output. Can't seem to find a better way
+	// of just getting the symbolic ref we need right now, so this
+	// will have to do.
+	rdr := bufio.NewReader(bytes.NewBuffer(out))
+	l, isPrefix, err := rdr.ReadLine()
+	if err != nil {
+		fatal(err)
+	}
+
+	if isPrefix {
+		fatal("cannot read default remote branch: extremely long line read - probably a bug.")
+	}
+
+	parts := regexp.MustCompile(`\s+`).Split(string(l), -1)
+	if len(parts) != 3 || parts[0] != "ref:" {
+		fatalf("bad remote HEAD line: %s", l)
+	}
+
+	rParts := strings.Split(parts[1], "/")
+	return rParts[len(rParts)-1]
+}
+
 const help = "usage: depbump [-nopush|-nopr|-version VERSION] PATH [COMMAND]"
 
 func main() {
@@ -183,9 +215,9 @@ func main() {
 	}
 
 	// Check origin to see if we can support a pull request
-	var remoteOwner, remoteRepo string
+	var remoteOwner, remoteRepo, defaultBranch string
 	if push {
-		out, err = execCommand("git", "remote", "get-url", "origin").Output()
+		out, err = execCommand("git", "remote", "get-url", defaultRemote).Output()
 		if err != nil {
 			fatal(err)
 		}
@@ -221,6 +253,9 @@ func main() {
 
 			remoteOwner = ownerRepo[0]
 			remoteRepo = strings.TrimSuffix(ownerRepo[1], ".git")
+
+			// Detect remote HEAD branch for PRs
+			defaultBranch = discoverDefaultBranch()
 		}
 	} else {
 		pr = false
@@ -333,7 +368,7 @@ func main() {
 
 	// Check to see if remote exists for this branch first if we are
 	// pushing; if it does, we need to abort.
-	out, err = execCommand("git", "ls-remote", "--heads", "origin", branch).Output()
+	out, err = execCommand("git", "ls-remote", "--heads", defaultRemote, branch).Output()
 	if err != nil {
 		fatalf("fatal: error checking for remote branch: %s\n", err)
 	}
@@ -374,7 +409,7 @@ func main() {
 
 	// Push to origin
 	if push {
-		if err := execCommandRun("git", "push", "origin", branch); err != nil {
+		if err := execCommandRun("git", "push", defaultRemote, branch); err != nil {
 			fatal(err.Error() + "\n\nWARNING: commit succeeded but push failed; push manually to correct")
 		}
 	}
@@ -386,14 +421,14 @@ func main() {
 
 	// Submit PR
 	var prURL string
-	if pr {
+	if pr && defaultBranch != "" {
 		fmt.Println("creating pull request...")
 
 		payload := map[string]interface{}{
 			"title": titleBody[0],
 			"body":  titleBody[1],
 			"head":  branch,
-			"base":  "master",
+			"base":  defaultBranch,
 		}
 
 		payloadB := new(bytes.Buffer)
@@ -438,6 +473,8 @@ func main() {
 		default:
 			fatalf("fatal: error creating pull request (%s): %s\n", resp.Status, respBytes)
 		}
+	} else if pr {
+		fmt.Println("WARNING: no remote default branch found, cannot submit pull request.")
 	}
 
 	fmt.Printf("\npath %s successfully updated to version %s.\n", path, newVersion)
