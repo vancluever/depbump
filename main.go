@@ -26,6 +26,7 @@ type commitTemplateData struct {
 }
 
 const gitHubPREndpointFmt = "https://api.github.com/repos/%s/%s/pulls"
+const defaultGithubTokenName = "GITHUB_TOKEN"
 
 const defaultRemote = "origin"
 
@@ -142,7 +143,7 @@ func discoverDefaultBranch() string {
 	return rParts[len(rParts)-1]
 }
 
-const help = "usage: depbump [-nopush|-nopr|-version VERSION] PATH [COMMAND]"
+const help = "usage: depbump [-nopush|-nopr|-token TOKEN_NAME|-version VERSION] PATH [COMMAND]"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -154,6 +155,7 @@ func main() {
 	var postCmdRaw []string
 	push := true
 	pr := true
+	githubTokenName := defaultGithubTokenName
 
 	for i := 1; i < len(os.Args); i++ {
 		arg := os.Args[i]
@@ -164,6 +166,19 @@ func main() {
 
 			case "-nopr":
 				pr = false
+
+			case "-token":
+				if i+1 >= len(os.Args) {
+					// Not enough arguments
+					fatal("fatal: not enough arguments\n" + help)
+				}
+
+				i++
+				if !regexp.MustCompile(`^[a-zA-Z0-9_]+$`).Match([]byte(os.Args[i])) {
+					// Invalid environment variable
+					fatal(fmt.Sprintf("fatal: invalid environment variable name %q\n%s", os.Args[i], help))
+				}
+				githubTokenName = os.Args[i]
 
 			case "-version":
 				if i+1 >= len(os.Args) {
@@ -236,7 +251,7 @@ func main() {
 			uri = path
 		}
 
-		if host != "github.com" || os.Getenv("GITHUB_TOKEN") == "" {
+		if host != "github.com" || os.Getenv(githubTokenName) == "" {
 			pr = false
 		} else {
 			ownerRepo := strings.Split(uri, "/")
@@ -434,7 +449,7 @@ func main() {
 			fatalf("fatal: error creating request: %s\n", err)
 		}
 
-		req.Header.Add("Authorization", fmt.Sprintf("bearer %s", os.Getenv("GITHUB_TOKEN")))
+		req.Header.Add("Authorization", fmt.Sprintf("bearer %s", os.Getenv(githubTokenName)))
 		req.Header.Add("Content-Type", "application/json")
 
 		client := &http.Client{}
